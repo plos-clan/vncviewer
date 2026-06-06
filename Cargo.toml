@@ -1,0 +1,39 @@
+[package]
+name = "vncviewer"
+version = "0.1.0"
+edition = "2024"
+
+[profile.release]
+lto = true
+opt-level = 3
+panic = "abort"
+codegen-units = 1
+
+[dependencies]
+anyhow = "1.0.102"
+arboard = "3.6.1"
+tracing-subscriber = "0.3.23"
+bytemuck = "1.25.0"
+egui = { version = "0.34.3", features = ["bytemuck"] }
+keyring-core = "1.0"
+miniquad = "0.4.11"
+vnc = { package = "vnc-rs", git = "https://github.com/plos-clan/vnc-rs" }
+tokio = { version = "1.52.3", features = ["full"] }
+tracing = { version = "0.1.44", features = ["log"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = "1.1.0"
+
+[target.'cfg(windows)'.dependencies.windows-sys]
+version = "0.61.2"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+]
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+zbus-secret-service-keyring-store.version = "1.0.0"
+zbus-secret-service-keyring-store.features = ["rt-tokio-crypto-rust"]

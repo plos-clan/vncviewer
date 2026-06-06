@@ -1,0 +1,4 @@
+# Build temp files
+target
+perf.*
+flamegraph.svg
