@@ -7,6 +7,7 @@ mod platform;
 
 use crate::egui::EguiMq;
 use client::{CONNECT_WINDOW_SIZE, Stage};
+use egui_system_fonts::{FontStyle, set_auto};
 use miniquad::conf::Conf;
 use miniquad::window;
 use tracing::Level;
@@ -57,6 +58,7 @@ fn main() {
 
     miniquad::start(conf, move || {
         let egui_mq = EguiMq::new(window::new_rendering_backend());
+        set_auto(&egui_mq.ctx, FontStyle::Sans);
         egui_mq.ctx.set_zoom_factor(window::dpi_scale());
         egui_mq
             .ctx

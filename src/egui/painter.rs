@@ -1,11 +1,7 @@
 use std::collections::HashMap;
 
 use egui::epaint::Vertex;
-use miniquad::{
-    Backend, Bindings, BlendFactor, BlendState, BlendValue, BufferLayout, BufferSource, BufferType,
-    BufferUsage, Equation, Pipeline, PipelineParams, RenderingBackend, ShaderSource, TextureId,
-    UniformsSource, VertexAttribute, VertexFormat,
-};
+use miniquad::*;
 
 pub(super) struct Painter {
     pipeline: Pipeline,
@@ -22,19 +18,18 @@ impl Painter {
             },
             Backend::Metal => unimplemented!("egui painter currently supports OpenGL only"),
         };
+        let shader_meta = ShaderMeta {
+            images: vec!["u_sampler".to_owned()],
+            uniforms: UniformBlockLayout {
+                uniforms: vec![
+                    UniformDesc::new("u_screen_size", UniformType::Float2),
+                    UniformDesc::new("u_texture", UniformType::Float4),
+                    UniformDesc::new("u_sample_mode", UniformType::Float1),
+                ],
+            },
+        };
         let shader = ctx
-            .new_shader(
-                source,
-                miniquad::ShaderMeta {
-                    images: vec!["u_sampler".to_owned()],
-                    uniforms: miniquad::UniformBlockLayout {
-                        uniforms: vec![miniquad::UniformDesc::new(
-                            "u_screen_size",
-                            miniquad::UniformType::Float2,
-                        )],
-                    },
-                },
-            )
+            .new_shader(source, shader_meta)
             .expect("create egui shader");
         let pipeline = ctx.new_pipeline(
             &[BufferLayout::default()],
@@ -97,24 +92,30 @@ impl Painter {
             return;
         }
 
-        let filter = match delta.options.magnification {
-            egui::TextureFilter::Nearest => miniquad::FilterMode::Nearest,
-            egui::TextureFilter::Linear => miniquad::FilterMode::Linear,
+        let wrap = match delta.options.wrap_mode {
+            egui::TextureWrapMode::ClampToEdge => TextureWrap::Clamp,
+            egui::TextureWrapMode::Repeat => TextureWrap::Repeat,
+            egui::TextureWrapMode::MirroredRepeat => TextureWrap::Mirror,
         };
-        let texture = ctx.new_texture_from_data_and_format(
-            data,
-            miniquad::TextureParams {
-                format: miniquad::TextureFormat::RGBA8,
-                wrap: miniquad::TextureWrap::Clamp,
-                min_filter: filter,
-                mag_filter: filter,
-                width: width as _,
-                height: height as _,
-                ..Default::default()
-            },
-        );
 
-        if let Some(previous) = self.textures.insert(id, texture) {
+        let params = TextureParams {
+            format: TextureFormat::RGBA8,
+            wrap,
+            min_filter: match delta.options.minification {
+                egui::TextureFilter::Nearest => FilterMode::Nearest,
+                egui::TextureFilter::Linear => FilterMode::Linear,
+            },
+            mag_filter: match delta.options.magnification {
+                egui::TextureFilter::Nearest => FilterMode::Nearest,
+                egui::TextureFilter::Linear => FilterMode::Linear,
+            },
+            width: width as _,
+            height: height as _,
+            ..Default::default()
+        };
+        let texture_id = ctx.new_texture_from_data_and_format(data, params);
+
+        if let Some(previous) = self.textures.insert(id, texture_id) {
             ctx.delete_texture(previous);
         }
     }
@@ -131,16 +132,9 @@ impl Painter {
         }
 
         let screen_size = miniquad::window::screen_size();
-        let screen_size_points = (
-            screen_size.0 / egui_ctx.pixels_per_point(),
-            screen_size.1 / egui_ctx.pixels_per_point(),
-        );
-
+        let pixels_per_point = egui_ctx.pixels_per_point();
         ctx.begin_default_pass(miniquad::PassAction::Nothing);
         ctx.apply_pipeline(&self.pipeline);
-        ctx.apply_uniforms(UniformsSource::table(&shader::Uniforms {
-            u_screen_size: screen_size_points,
-        }));
 
         for egui::ClippedPrimitive {
             clip_rect,
@@ -149,16 +143,10 @@ impl Painter {
         {
             match primitive {
                 egui::epaint::Primitive::Mesh(mesh) => {
-                    self.paint_mesh(
-                        ctx,
-                        screen_size,
-                        egui_ctx.pixels_per_point(),
-                        clip_rect,
-                        mesh,
-                    );
+                    self.paint_mesh(ctx, screen_size, pixels_per_point, clip_rect, mesh);
                 }
                 egui::epaint::Primitive::Callback(_) => {
-                    tracing::warn!("egui paint callbacks are not supported by the local painter");
+                    tracing::warn!("egui paint callbacks are not supported");
                 }
             }
         }
@@ -180,6 +168,80 @@ impl Painter {
         clip_rect: egui::Rect,
         mesh: egui::epaint::Mesh,
     ) {
+        debug_assert!(mesh.is_valid());
+
+        let egui::TextureId::Managed(_) = mesh.texture_id else {
+            tracing::warn!("egui user textures are not supported");
+            return;
+        };
+        let Some(texture) = self.textures.get(&mesh.texture_id).copied() else {
+            tracing::warn!("egui texture {:?} was not found", mesh.texture_id);
+            return;
+        };
+        self.bindings.images[0] = texture;
+
+        let mut position_rect = egui::Rect::NOTHING;
+        let mut uv_rect = egui::Rect::NOTHING;
+        for vertex in &mesh.vertices {
+            position_rect.extend_with(vertex.pos);
+            uv_rect.extend_with(vertex.uv);
+        }
+
+        let texture_params = ctx.texture_params(texture);
+        let texture_size = egui::vec2(texture_params.width as f32, texture_params.height as f32);
+        let screen_size_pixels = position_rect.size() * pixels_per_point;
+        let source_size = uv_rect.size() * texture_size;
+        let mut scale = egui::Vec2::ONE;
+        if source_size.x > f32::EPSILON {
+            scale.x = screen_size_pixels.x / source_size.x;
+        }
+        if source_size.y > f32::EPSILON {
+            scale.y = screen_size_pixels.y / source_size.y;
+        }
+
+        let is_downscaled = scale.x < 1.0 || scale.y < 1.0;
+        let is_integer_scale =
+            scale.x >= 1.0 && scale.y >= 1.0 && (scale - scale.round()).abs().max_elem() <= 0.001;
+        let sample_mode = if mesh.texture_id == egui::TextureId::default() {
+            1.0
+        } else if is_downscaled {
+            match texture_params.min_filter {
+                FilterMode::Nearest => 0.0,
+                FilterMode::Linear => 3.0,
+            }
+        } else if is_integer_scale {
+            0.0
+        } else {
+            match texture_params.mag_filter {
+                FilterMode::Nearest => 0.0,
+                FilterMode::Linear => 2.0,
+            }
+        };
+        ctx.apply_uniforms(UniformsSource::table(&shader::Uniforms {
+            u_screen_size: (
+                screen_size.0 / pixels_per_point,
+                screen_size.1 / pixels_per_point,
+            ),
+            u_texture: (texture_size.x, texture_size.y, scale.x, scale.y),
+            u_sample_mode: sample_mode,
+        }));
+
+        let min_x = (pixels_per_point * clip_rect.min.x).clamp(0.0, screen_size.0);
+        let min_y = (pixels_per_point * clip_rect.min.y).clamp(0.0, screen_size.1);
+        let max_x = (pixels_per_point * clip_rect.max.x).clamp(min_x, screen_size.0);
+        let max_y = (pixels_per_point * clip_rect.max.y).clamp(min_y, screen_size.1);
+        let min_x = min_x.round() as u32;
+        let min_y = min_y.round() as u32;
+        let max_x = max_x.round() as u32;
+        let max_y = max_y.round() as u32;
+
+        ctx.apply_scissor_rect(
+            min_x as i32,
+            (screen_size.1 as u32 - max_y) as i32,
+            (max_x - min_x) as i32,
+            (max_y - min_y) as i32,
+        );
+
         for mesh in mesh.split_to_u16() {
             debug_assert!(mesh.is_valid());
             self.ensure_buffer_capacity(ctx, mesh.vertices.len(), mesh.indices.len());
@@ -190,32 +252,6 @@ impl Painter {
             ctx.buffer_update(
                 self.bindings.index_buffer,
                 BufferSource::slice(&mesh.indices),
-            );
-
-            let egui::TextureId::Managed(_) = mesh.texture_id else {
-                tracing::warn!("egui user textures are not supported by the local painter");
-                continue;
-            };
-            let Some(texture) = self.textures.get(&mesh.texture_id).copied() else {
-                tracing::warn!("egui texture {:?} was not found", mesh.texture_id);
-                continue;
-            };
-            self.bindings.images[0] = texture;
-
-            let min_x = (pixels_per_point * clip_rect.min.x).clamp(0.0, screen_size.0);
-            let min_y = (pixels_per_point * clip_rect.min.y).clamp(0.0, screen_size.1);
-            let max_x = (pixels_per_point * clip_rect.max.x).clamp(min_x, screen_size.0);
-            let max_y = (pixels_per_point * clip_rect.max.y).clamp(min_y, screen_size.1);
-            let min_x = min_x.round() as u32;
-            let min_y = min_y.round() as u32;
-            let max_x = max_x.round() as u32;
-            let max_y = max_y.round() as u32;
-
-            ctx.apply_scissor_rect(
-                min_x as i32,
-                (screen_size.1 as u32 - max_y) as i32,
-                (max_x - min_x) as i32,
-                (max_y - min_y) as i32,
             );
             ctx.apply_bindings(&self.bindings);
             ctx.draw(0, mesh.indices.len() as i32, 1);
@@ -275,20 +311,64 @@ mod shader {
 
     pub(super) const FRAGMENT: &str = r#"
     #version 100
-    uniform sampler2D u_sampler;
     precision highp float;
+    precision mediump int;
+
+    uniform sampler2D u_sampler;
+    uniform vec4 u_texture;
+    uniform float u_sample_mode;
 
     varying vec2 v_tc;
     varying vec4 v_rgba_in_gamma;
 
+    vec4 sample_area(vec2 uv) {
+        vec2 texture_size = u_texture.xy;
+        vec2 scale = max(u_texture.zw, vec2(1e-4));
+        vec2 footprint = 1.0 / scale;
+        footprint = max(vec2(1.0), footprint);
+        vec2 sample_step = footprint / (4.0 * texture_size);
+
+        vec4 color = vec4(0.0);
+        for (int i = 0; i < 16; i++) {
+            float index = float(i);
+            vec2 grid = vec2(mod(index, 4.0), floor(index / 4.0));
+            vec2 sample_uv = uv + (grid - 1.5) * sample_step;
+            color += texture2D(u_sampler, sample_uv);
+        }
+
+        return color / 16.0;
+    }
+
+    vec4 sample_texture(vec2 uv) {
+        if (u_sample_mode > 2.5) {
+            return sample_area(uv);
+        }
+
+        vec2 texture_size = u_texture.xy;
+        vec2 texel = uv * texture_size - 0.5;
+        vec2 blend = fract(texel);
+
+        if (u_sample_mode < 0.5) {
+            blend = floor(blend + 0.5);
+        } else if (u_sample_mode > 1.5) {
+            vec2 sharpness = max(u_texture.zw, vec2(1.0));
+            blend = (blend - 0.5) * sharpness + 0.5;
+            blend = clamp(blend, 0.0, 1.0);
+        }
+
+        uv = (floor(texel) + blend + 0.5) / texture_size;
+        return texture2D(u_sampler, uv);
+    }
+
     void main() {
-        vec4 texture_in_gamma = texture2D(u_sampler, v_tc);
-        gl_FragColor = v_rgba_in_gamma * texture_in_gamma;
+        gl_FragColor = v_rgba_in_gamma * sample_texture(v_tc);
     }
     "#;
 
     #[repr(C)]
     pub(super) struct Uniforms {
         pub(super) u_screen_size: (f32, f32),
+        pub(super) u_texture: (f32, f32, f32, f32),
+        pub(super) u_sample_mode: f32,
     }
 }
