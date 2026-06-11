@@ -15,7 +15,7 @@ use crate::platform::windows;
 use super::connect::ConnectForm;
 use super::session::VncSession;
 
-pub(crate) const CONNECT_WINDOW_SIZE: (u32, u32) = (565, 280);
+pub(crate) const CONNECT_WINDOW_SIZE: (u32, u32) = (480, 410);
 
 pub(crate) struct Stage {
     egui_mq: EguiMq,

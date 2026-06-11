@@ -2230,6 +2230,8 @@ dependencies = [
  "egui-system-fonts",
  "keyring-core",
  "miniquad",
+ "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
