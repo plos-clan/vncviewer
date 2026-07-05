@@ -6,8 +6,7 @@ mod egui;
 mod platform;
 
 use crate::egui::EguiMq;
-use client::{CONNECT_WINDOW_SIZE, Stage};
-use egui_system_fonts::{FontStyle, set_auto};
+use client::Stage;
 use miniquad::conf::Conf;
 use miniquad::window;
 use tracing::Level;
@@ -50,15 +49,12 @@ fn main() {
         window_title: "VNC Viewer".into(),
         high_dpi: true,
         sample_count: 0,
-        window_width: CONNECT_WINDOW_SIZE.0 as i32,
-        window_height: CONNECT_WINDOW_SIZE.1 as i32,
         window_resizable: false,
         ..Default::default()
     };
 
     miniquad::start(conf, move || {
         let egui_mq = EguiMq::new(window::new_rendering_backend());
-        set_auto(&egui_mq.ctx, FontStyle::Sans);
         egui_mq.ctx.set_zoom_factor(window::dpi_scale());
         egui_mq
             .ctx

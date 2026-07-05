@@ -1,6 +1,8 @@
 mod painter;
 
+use egui::epaint::text::{FontInsert, FontPriority, InsertFontFamily};
 pub(crate) use egui::*;
+use system_fonts::{FontStyle, FoundFontSource, find_for_system_locale};
 
 pub(crate) struct EguiMq {
     pub(crate) ctx: egui::Context,
@@ -12,9 +14,30 @@ pub(crate) struct EguiMq {
 impl EguiMq {
     pub(crate) fn new(mut mq_ctx: Box<dyn miniquad::RenderingBackend>) -> Self {
         let painter = painter::Painter::new(&mut *mq_ctx);
+        let ctx = egui::Context::default();
+
+        let (_, _, fonts) = find_for_system_locale(FontStyle::Sans);
+        for font in fonts {
+            let bytes = match font.source {
+                FoundFontSource::Path(path) => match std::fs::read(path) {
+                    Ok(bytes) => bytes,
+                    Err(_) => continue,
+                },
+                FoundFontSource::Bytes(bytes) => bytes.to_vec(),
+            };
+
+            ctx.add_font(FontInsert {
+                name: font.key,
+                data: egui::FontData::from_owned(bytes),
+                families: vec![InsertFontFamily {
+                    family: egui::FontFamily::Proportional,
+                    priority: FontPriority::Lowest,
+                }],
+            });
+        }
 
         Self {
-            ctx: egui::Context::default(),
+            ctx,
             input: egui::RawInput::default(),
             mq_ctx,
             painter,

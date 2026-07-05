@@ -3,4 +3,4 @@ mod session;
 mod stage;
 mod viewer;
 
-pub(crate) use stage::{CONNECT_WINDOW_SIZE, Stage};
+pub(crate) use stage::Stage;

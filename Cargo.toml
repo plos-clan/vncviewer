@@ -10,19 +10,26 @@ panic = "abort"
 codegen-units = 1
 
 [dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.103"
 arboard = "3.6.1"
 tracing-subscriber = "0.3.23"
 bytemuck = "1.25.0"
-egui = { version = "0.34.3", features = ["bytemuck"] }
-egui-system-fonts = "0.34.2"
-keyring-core = "1.0"
+keyring-core = "1.0.0"
 miniquad = "0.4.11"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-vnc = { package = "vnc-rs", git = "https://github.com/plos-clan/vnc-rs" }
 tokio = { version = "1.52.3", features = ["full"] }
 tracing = { version = "0.1.44", features = ["log"] }
+system-fonts = "0.1.2"
+
+[dependencies.vnc]
+package = "vnc-rs"
+git = "https://github.com/plos-clan/vnc-rs"
+
+[dependencies.egui]
+version = "0.35.0"
+default-features = false
+features = ["bytemuck"]
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = "1.1.0"

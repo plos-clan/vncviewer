@@ -300,14 +300,11 @@ impl ConnectForm {
             })
         };
 
-        ui.centered_and_justified(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(CONNECT_FORM_WIDTH);
-                address_book(ui, self);
-                profile_fields(ui, &mut self.current);
-                submit_button(ui, self)
-            })
-            .inner
+        ui.vertical(|ui| {
+            ui.set_width(CONNECT_FORM_WIDTH);
+            address_book(ui, self);
+            profile_fields(ui, &mut self.current);
+            submit_button(ui, self)
         })
         .inner
     }

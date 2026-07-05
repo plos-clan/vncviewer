@@ -15,8 +15,6 @@ use crate::platform::windows;
 use super::connect::ConnectForm;
 use super::session::VncSession;
 
-pub(crate) const CONNECT_WINDOW_SIZE: (u32, u32) = (480, 410);
-
 pub(crate) struct Stage {
     egui_mq: EguiMq,
     rt_handle: Handle,
@@ -150,10 +148,10 @@ impl EventHandler for Stage {
             if let Some(vnc) = &mut self.vnc {
                 egui::CentralPanel::default()
                     .frame(egui::Frame::NONE.fill(egui::Color32::BLACK))
-                    .show_inside(ui, |ui| disconnect = vnc.ui(ui));
+                    .show(ui, |ui| disconnect = vnc.ui(ui));
             } else {
-                request = egui::CentralPanel::default()
-                    .show_inside(ui, |ui| self.connect_form.ui(ui))
+                request = egui::Frame::central_panel(ui.style())
+                    .show(ui, |ui| self.connect_form.ui(ui))
                     .inner;
             }
         });
@@ -162,7 +160,16 @@ impl EventHandler for Stage {
             self.vnc = None;
             #[cfg(windows)]
             windows::set_window_resizable(false);
-            window::set_window_size(CONNECT_WINDOW_SIZE.0, CONNECT_WINDOW_SIZE.1);
+        }
+
+        if self.vnc.is_none() {
+            let ctx = &self.egui_mq.ctx;
+            let size = ctx.globally_used_rect().size() * ctx.pixels_per_point();
+            let (width, height) = (size.x.round() as u32, size.y.round() as u32);
+            let screen = window::screen_size();
+            if (screen.0 as u32, screen.1 as u32) != (width, height) {
+                window::set_window_size(width, height);
+            }
         }
 
         if let Some((host, credentials)) = request {
